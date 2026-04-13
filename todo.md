@@ -21,12 +21,12 @@
 
 ## Phase 3: 設定・シークレット管理
 
-- [ ] 3.1 `config.py` - AWS Secrets Manager からの認証情報取得
+- [x] 3.1 `config.py` - AWS Secrets Manager からの認証情報取得
   - シークレット構造: asken_email, asken_password, garmin_email, garmin_password, garmin_tokens
-- [ ] 3.2 Garmin トークン永続化ヘルパー
+- [x] 3.2 Garmin トークン永続化ヘルパー
   - `load_garmin_tokens()`: Secrets Manager → `/tmp/.garminconnect/`
   - `save_garmin_tokens()`: `/tmp/.garminconnect/` → Secrets Manager
-- [ ] 3.3 環境変数定義 (SECRET_NAME, GARMINTOKENS)
+- [x] 3.3 環境変数定義 (SECRET_NAME, GARMINTOKENS)
 
 ## Phase 4: あすけんクライアント
 

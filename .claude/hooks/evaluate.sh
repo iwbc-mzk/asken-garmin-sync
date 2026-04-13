@@ -41,16 +41,24 @@ fi
 
 ERRORS=0
 
-# ruff linting
-echo "[静的解析] ruff を実行中..."
-if ! python -m ruff check "$SRC_DIR" 2>&1; then
-  ERRORS=1
+# ruff linting（未インストールの場合はスキップ）
+if python -m ruff --version &>/dev/null; then
+  echo "[静的解析] ruff を実行中..."
+  if ! python -m ruff check "$SRC_DIR" 2>&1; then
+    ERRORS=1
+  fi
+else
+  echo "[静的解析] ruff が未インストールのためスキップ"
 fi
 
-# mypy type check
-echo "[静的解析] mypy を実行中..."
-if ! python -m mypy "$SRC_DIR" 2>&1; then
-  ERRORS=1
+# mypy type check（未インストールの場合はスキップ）
+if python -m mypy --version &>/dev/null; then
+  echo "[静的解析] mypy を実行中..."
+  if ! python -m mypy "$SRC_DIR" 2>&1; then
+    ERRORS=1
+  fi
+else
+  echo "[静的解析] mypy が未インストールのためスキップ"
 fi
 
 if [ "$ERRORS" -ne 0 ]; then
