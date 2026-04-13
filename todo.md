@@ -15,7 +15,7 @@
 
 ## Phase 2: データモデル
 
-- [ ] 2.1 `models.py` - データクラス定義
+- [x] 2.1 `models.py` - データクラス定義
   - `BodyComposition`: date, weight_kg, body_fat_percent
   - `ActivityCalories`: date, calories_burned
 
