@@ -37,6 +37,7 @@ DEFAULT_EXERCISE_ID: int = 1
 DEFAULT_CAL_PER_MIN: float = 4.0  # kcal/分
 
 # リトライ設定（認証エラーはリトライしない）
+# max_retries=2 は「初回1回 + 最大2回リトライ = 合計最大3回試行」を意味する
 _MAX_RETRIES: int = 2
 _RETRY_BASE_DELAY: float = 1.0  # 指数バックオフの基底（秒）
 
@@ -53,12 +54,15 @@ def _request_with_retry(
     fn: Any,
     *args: Any,
     max_retries: int = _MAX_RETRIES,
+    check_session_redirect: bool = True,
     **kwargs: Any,
 ) -> requests.Response:
     """接続エラー時に最大 max_retries 回指数バックオフでリトライする.
 
     - 認証エラー (401/403) はリトライせず即座に例外を送出する
-    - ログインページへのリダイレクト（セッション切れ）も認証エラーとして扱う
+    - check_session_redirect=True のとき、ログインページへのリダイレクト（セッション切れ）
+      も認証エラーとして扱う。ログインページ自体への GET/POST では False を指定すること
+      （リダイレクト先がログインURLになるため誤検知する）
     """
     if max_retries < 0:
         raise ValueError(f"max_retries は 0 以上である必要があります: {max_retries}")
@@ -74,7 +78,8 @@ def _request_with_retry(
             resp.raise_for_status()
             # セッション切れ判定: リダイレクト後の最終 URL がログインページ
             # startswith を使い /login/logout 等の誤検知を防ぐ
-            if resp.url.startswith(_LOGIN_URL):
+            # ログインページへの GET/POST では check_session_redirect=False を指定する
+            if check_session_redirect and resp.url.startswith(_LOGIN_URL):
                 raise AskenAuthError(
                     "セッションが切れています。再ログインが必要です。"
                 )
@@ -82,6 +87,10 @@ def _request_with_retry(
         except AskenAuthError:
             raise
         except requests.RequestException as exc:
+            # 429 (Too Many Requests) を含む全ての接続エラー・HTTP エラーをリトライする。
+            # あすけんは garminconnect と異なり専用の 429 例外クラスを持たないため、
+            # raise_for_status() が送出する HTTPError（RequestException のサブクラス）
+            # として指数バックオフ付きリトライに入る（仕様通りの動作）。
             last_exc = exc
             if attempt < max_retries:
                 delay = _RETRY_BASE_DELAY * (2 ** attempt)
@@ -120,13 +129,12 @@ class AskenClient:
         session = requests.Session()
 
         # Step 1: ログインページから _Token 系 hidden input をすべて収集
-        try:
-            get_resp = session.get(_LOGIN_URL, headers=_HEADERS, timeout=30)
-            get_resp.raise_for_status()
-        except requests.RequestException as exc:
-            # ネットワーク障害・HTTP エラーは AskenError（リトライ可能）
-            # 認証情報不正とは区別する
-            raise AskenError("ログインページの取得に失敗しました") from exc
+        # check_session_redirect=False: リクエスト先が _LOGIN_URL 自体のため、
+        # 正常レスポンスの URL が _LOGIN_URL になり誤って AskenAuthError にならないようにする。
+        get_resp = _request_with_retry(
+            session.get, _LOGIN_URL, headers=_HEADERS, timeout=30,
+            check_session_redirect=False,
+        )
 
         soup = BeautifulSoup(get_resp.text, "lxml")
         login_form = soup.find("form", {"id": "indexForm"})
@@ -154,25 +162,22 @@ class AskenClient:
                 "data[CustomerMember][autologin]": "1",
             }
         )
-        try:
-            post_resp = session.post(
-                _LOGIN_URL,
-                headers=_HEADERS,
-                data=payload,
-                timeout=30,
-            )
-            post_resp.raise_for_status()
-        except requests.RequestException as exc:
-            # ネットワーク障害・HTTP エラーは AskenError（リトライ可能）
-            raise AskenError("ログインリクエストに失敗しました") from exc
+        # POST も _request_with_retry でラップしてネットワーク障害時にリトライする。
+        # CSRF トークンはネットワーク到達前の失敗であれば有効なままであるため、
+        # 同一トークンでのリトライは通常安全。サーバー側で無効化された場合は
+        # 後続の「ログアウト」チェックで AskenAuthError として検出される。
+        # check_session_redirect=False: GET と同様に POST 先も _LOGIN_URL のため、
+        # リダイレクト URL による成功/失敗の判定は行わず「ログアウト」テキスト検査に一本化する。
+        post_resp = _request_with_retry(
+            session.post,
+            _LOGIN_URL,
+            headers=_HEADERS,
+            data=payload,
+            timeout=30,
+            check_session_redirect=False,
+        )
 
-        # ログイン成功判定:
-        #   1. 最終 URL がログインページでない（リダイレクトされた）
-        #   2. 「ログアウト」リンクが存在する
-        if post_resp.url.startswith(_LOGIN_URL):
-            raise AskenAuthError(
-                "あすけんのログインに失敗しました（ログインページへリダイレクト）"
-            )
+        # ログイン成功判定: 「ログアウト」リンクの存在をセッション確立の証拠とする
         if "ログアウト" not in post_resp.text:
             raise AskenAuthError(
                 "あすけんのログインに失敗しました（メールアドレスまたはパスワードを確認してください）"

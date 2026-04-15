@@ -13,12 +13,13 @@ from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from .logging_config import configure_logging
 from .sync import run_sync
 
 # ロガー設定
-# Lambda 実行環境では AWS_LAMBDA_FUNCTION_NAME が設定されるため、
-# ルートロガーのレベルを INFO に設定してすべての子ロガーに伝播させる。
-logging.getLogger().setLevel(logging.INFO)
+# Lambda 実行環境では既存ハンドラーに JSON フォーマッターを適用する。
+# モジュールレベルで呼び出すことでコールドスタート時に一度だけ設定される。
+configure_logging()
 logger = logging.getLogger(__name__)
 
 _JST = ZoneInfo("Asia/Tokyo")
@@ -75,7 +76,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     # config.get_secrets() も同じ環境変数を参照するが、ここで明示することで
     # handler レベルで設定を把握しやすくする。
     secret_name = os.environ.get("SECRET_NAME")
-    logger.info("同期開始: target_date=%s secret_name=%s", target_date, secret_name)
+    logger.info("同期開始: target_date=%s", target_date)
 
     try:
         result = run_sync(target_date, secret_name=secret_name)

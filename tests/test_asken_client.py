@@ -138,7 +138,8 @@ class TestAskenClientLogin:
                 "https://www.asken.jp/login/",
             )
             mock_session_cls.return_value = session
-            with pytest.raises(AskenAuthError, match="リダイレクト"):
+            # POST 応答に「ログアウト」テキストがない → AskenAuthError（パスワード確認要）
+            with pytest.raises(AskenAuthError, match="パスワード"):
                 AskenClient("bad@example.com", "wrong")
 
     def test_login_fails_when_no_logout_link(self, fixture_html):
@@ -155,33 +156,42 @@ class TestAskenClientLogin:
                 AskenClient("test@example.com", "wrong_pw")
 
     def test_login_get_network_error_raises_asken_error(self, fixture_html):
-        """ログインページ取得時のネットワーク障害は AskenError（認証失敗ではない）."""
+        """ログインページ取得時のネットワーク障害は AskenError（認証失敗ではない）.
+
+        _request_with_retry が最大リトライ後に "N 回失敗しました" メッセージで AskenError を送出。
+        """
         import requests as req
 
         with patch("asken_garmin_sync.asken_client.requests.Session") as mock_session_cls:
-            session = MagicMock()
-            session.get.side_effect = req.ConnectionError("connection refused")
-            mock_session_cls.return_value = session
+            with patch("asken_garmin_sync.asken_client.time.sleep"):
+                session = MagicMock()
+                session.get.side_effect = req.ConnectionError("connection refused")
+                mock_session_cls.return_value = session
 
-            with pytest.raises(AskenError, match="取得に失敗"):
-                AskenClient("test@example.com", "password")
+                with pytest.raises(AskenError, match="失敗しました"):
+                    AskenClient("test@example.com", "password")
 
     def test_login_post_network_error_raises_asken_error(self, fixture_html):
-        """ログイン POST 時のネットワーク障害は AskenError（認証失敗ではない）."""
+        """ログイン POST 時のネットワーク障害は AskenError（認証失敗ではない）.
+
+        _request_with_retry が最大リトライ後に "N 回失敗しました" メッセージで AskenError を送出。
+        """
         import requests as req
 
         with patch("asken_garmin_sync.asken_client.requests.Session") as mock_session_cls:
-            session = MagicMock()
-            get_resp = MagicMock()
-            get_resp.status_code = 200
-            get_resp.text = fixture_html("login_page.html")
-            get_resp.raise_for_status = MagicMock()
-            session.get.return_value = get_resp
-            session.post.side_effect = req.ConnectionError("connection refused")
-            mock_session_cls.return_value = session
+            with patch("asken_garmin_sync.asken_client.time.sleep"):
+                session = MagicMock()
+                get_resp = MagicMock()
+                get_resp.status_code = 200
+                get_resp.url = "https://www.asken.jp/login/"
+                get_resp.text = fixture_html("login_page.html")
+                get_resp.raise_for_status = MagicMock()
+                session.get.return_value = get_resp
+                session.post.side_effect = req.ConnectionError("connection refused")
+                mock_session_cls.return_value = session
 
-            with pytest.raises(AskenError, match="リクエストに失敗"):
-                AskenClient("test@example.com", "password")
+                with pytest.raises(AskenError, match="失敗しました"):
+                    AskenClient("test@example.com", "password")
 
     def test_login_fails_when_csrf_token_missing(self):
         html_no_token = "<html><body><form id='indexForm'></form></body></html>"

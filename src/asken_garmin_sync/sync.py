@@ -131,6 +131,8 @@ def run_sync(target_date: date, secret_name: str | None = None) -> SyncResult:
         # Garmin クライアントが初期化成功した段階でトークン保存フラグを立てる。
         # login() でトークンが更新された可能性があるため、auth error が後続で発生しても
         # finally でトークンを保存する。
+        # NOTE: GarminClient.__init__ が GarminError で失敗した場合は
+        # このフラグは立たず、/tmp のトークンは保存せずに cleanup される（再フルログイン許容）
         garmin_initialized = True
 
         # 6.1: あすけん → Garmin（体重・体脂肪率）

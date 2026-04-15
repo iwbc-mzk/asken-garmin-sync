@@ -33,7 +33,10 @@ logger = logging.getLogger(__name__)
 _JST = ZoneInfo("Asia/Tokyo")
 
 # リトライ設定（認証エラーはリトライしない）
+# 仕様「最大3回」はリトライ回数を指す（todo.md Phase 9.1）
 # max_retries=3 は「初回1回 + 最大3回リトライ = 合計最大4回試行」を意味する
+# あすけん側（_MAX_RETRIES=2）は「最大2回リトライ = 合計最大3回試行」と非対称だが意図的:
+# Garmin は 429 レート制限を受けやすいため、追加のリトライを許容している
 _MAX_RETRIES: int = 3
 _RETRY_BASE_DELAY: float = 1.0  # 指数バックオフの基底（秒）
 
