@@ -83,12 +83,12 @@
 
 ## Phase 10: テスト
 
-- [ ] 10.1 あすけんクライアントのユニットテスト (`responses`でHTTPモック)
+- [x] 10.1 あすけんクライアントのユニットテスト (`responses`でHTTPモック)
   - `tests/fixtures/` にHTML fixtures を配置
-- [ ] 10.2 Garmin クライアントのユニットテスト (Garminクラスをモック)
-- [ ] 10.3 同期ロジックのユニットテスト (両クライアントをモック)
-- [ ] 10.4 Lambda ハンドラーのユニットテスト
-- [ ] 10.5 AWS周り (`moto` で Secrets Manager をモック)
+- [x] 10.2 Garmin クライアントのユニットテスト (Garminクラスをモック)
+- [x] 10.3 同期ロジックのユニットテスト (両クライアントをモック)
+- [x] 10.4 Lambda ハンドラーのユニットテスト
+- [x] 10.5 AWS周り (`moto` で Secrets Manager をモック)
 
 ## Phase 11: デプロイ
 
