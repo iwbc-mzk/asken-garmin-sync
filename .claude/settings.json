@@ -3,6 +3,7 @@
     "allow": [
       "WebSearch",
       "Read(*)",
+      "Bash(find *)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(aws --version)",
@@ -12,16 +13,27 @@
       "Bash(pip show *)",
       "Bash(pip list *)",
       "Bash(pip3 show *)",
-      "Bash(pytest tests/test_asken_client.py -v)",
-      "Bash(whitch *)",
-      "Bash(finde *)",
+      "Bash(pytest *)",
       "Bash(env LC_ALL=C bash /workspace/.claude/hooks/evaluate.sh)",
-      "Bash(echo:*)",
-      "Bash(python3:*)",
-      "Bash(python:*)"
+      "Bash(echo *)",
+      "Bash(python3 *)",
+      "Bash(python *)",
+      "Bash(mypy *)",
+      "Bash(python -c *)"
     ]
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /workspace/.claude/hooks/allow_dev_commands.py"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
