@@ -5,9 +5,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import date
 
-from .asken_client import AskenAuthError
 from .config import Credentials
-from .myfitnesspal_client import MfpAuthError
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +27,7 @@ def sync_meals(target_date: date, credentials: Credentials) -> MealSyncResult:
         MealSyncResult: 登録・スキップ・エラー件数のサマリー
 
     Raises:
-        AskenAuthError: あすけん認証エラー
-        MfpAuthError: MyFitnessPal 認証エラー
+        Exception: 認証エラー等の致命的エラー（Phase 6 で具体化）
     """
     raise NotImplementedError
 

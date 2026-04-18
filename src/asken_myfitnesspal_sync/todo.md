@@ -41,10 +41,10 @@
 
 ## Phase 3: 設定・シークレット管理
 
-- [ ] 3.1 `config.py` - AWS Secrets Manager からの認証情報取得
+- [x] 3.1 `config.py` - AWS Secrets Manager からの認証情報取得
   - シークレット名: `asken-myfitnesspal-sync/credentials`
   - 構造: `asken_email`, `asken_password`, `myfitnesspal_email`, `myfitnesspal_password`
-- [ ] 3.2 環境変数定義
+- [x] 3.2 環境変数定義
   - `SECRET_NAME`（省略時: `asken-myfitnesspal-sync/credentials`）
   - `TARGET_DATE`（YYYY-MM-DD、省略時: JST 当日）
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -28,7 +28,7 @@ class JsonFormatter(logging.Formatter):
 
     @staticmethod
     def _utc_iso(created: float) -> str:
-        dt = datetime.fromtimestamp(created, tz=timezone.utc)
+        dt = datetime.fromtimestamp(created, tz=UTC)
         return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
 
 

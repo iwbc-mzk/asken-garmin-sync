@@ -2,30 +2,23 @@
   "permissions": {
     "allow": [
       "WebSearch",
+      "Read(*)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(aws --version)",
       "Bash(sam --version)",
       "Bash(pip install *)",
       "Bash(pip3 install *)",
-      "Bash(python3 -c *)",
       "Bash(pip show *)",
       "Bash(pip list *)",
-      "Bash(python3 -m pytest tests/test_asken_client.py -v)",
-      "Bash(python -m pytest tests/test_asken_client.py -v)",
-      "Read(//usr/**)",
-      "Read(//opt/**)",
-      "Read(//home/node/.local/**)",
       "Bash(pip3 show *)",
       "Bash(pytest tests/test_asken_client.py -v)",
       "Bash(whitch *)",
       "Bash(finde *)",
-      "Bash(python -m *)",
-      "Bash(python -c \"from asken_myfitnesspal_sync.models import MealType, MealNutrition, DailyMeals; print\\('import OK'\\)\")",
-      "Bash(python -c \"from asken_myfitnesspal_sync.logging_config import JsonFormatter, configure_logging; print\\('import OK'\\)\")",
-      "Bash(python -c *)",
       "Bash(env LC_ALL=C bash /workspace/.claude/hooks/evaluate.sh)",
-      "Bash(echo \"exit: $?\")"
+      "Bash(echo:*)",
+      "Bash(python3:*)",
+      "Bash(python:*)"
     ]
   },
   "hooks": {
