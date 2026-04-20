@@ -17,12 +17,45 @@
 | asken-garmin-sync       | あすけん ↔ Garmin Connect データ同期   | [src/asken_garmin_sync/CLAUDE.md](src/asken_garmin_sync/CLAUDE.md)             |
 | asken-myfitnesspal-sync | あすけん → MyFitnessPal 食事データ同期 | [src/asken_myfitnesspal_sync/CLAUDE.md](src/asken_myfitnesspal_sync/CLAUDE.md) |
 
+## コマンド
+
+```bash
+# テスト
+pytest tests/
+
+# Lint / フォーマットチェック
+ruff check src/ tests/
+
+# 型チェック
+mypy src/
+
+# デプロイ（初回 or 設定変更時）
+./scripts/deploy.sh --guided
+```
+
+## ディレクトリ構成
+
+```
+src/
+  utils/                      # 共通モジュール（logging_config.py, asken_base_client.py 等）
+  asken_garmin_sync/          # Garmin 連携 Lambda
+  asken_myfitnesspal_sync/    # MyFitnessPal 連携 Lambda
+tests/                        # pytest テストスイート
+scripts/deploy.sh             # SAM デプロイスクリプト
+template-garmin.yaml          # SAM テンプレート（Garmin）
+template-mfp.yaml             # SAM テンプレート（MFP）
+requirements_garmin.txt       # Garmin 用 Lambda 依存ライブラリ
+requirements_mfp.txt          # MFP 用 Lambda 依存ライブラリ
+pyproject.toml                # 開発依存（pytest, ruff, mypy 等）
+```
+
 ## 共通モジュール
 
 各機能で共通して利用されるコードは `src/utils/` に実装すること。
 
 - 例: JSON 構造化ログ設定、あすけんスクレイピングクライアント、リトライユーティリティ等
 - 各機能モジュール（`asken_garmin_sync/`、`asken_myfitnesspal_sync/` 等）は `src/utils/` をインポートして利用する
+- 各モジュール内の `logging_config.py` は `src/utils/logging_config.py` の re-export shim（実装本体は `src/utils/` 側）
 
 ## ハーネスエンジニアリング ルール
 

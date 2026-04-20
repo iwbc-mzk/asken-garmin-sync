@@ -106,6 +106,6 @@ src/asken_myfitnesspal_sync/
 ├── myfitnesspal_client.py  # MyFitnessPal API クライアント
 ├── models.py           # データモデル（食事データ等）
 ├── config.py           # 設定・Secrets Manager アクセス
-└── logging_config.py   # JSON 構造化ログ設定
+└── logging_config.py   # src/utils/logging_config.py の re-export shim
 ```
 

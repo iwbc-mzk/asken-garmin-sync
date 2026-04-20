@@ -49,3 +49,48 @@
 ## 決定事項
 
 - 摂取カロリーのGarmin Connect連携はスコープ外（ライブラリ未サポートのため）
+
+## 認証情報（Secrets Manager）
+
+シークレット名: `asken-garmin-sync`
+
+```json
+{
+  "asken_email": "...",
+  "asken_password": "...",
+  "garmin_email": "...",
+  "garmin_password": "...",
+  "garmin_tokens": null
+}
+```
+
+> `garmin_tokens` は初回認証後に自動書き込みされる OAuth トークン群。Lambda 同時実行数=1 必須（CAS APIがないため）。
+
+## インフラ構成
+
+- **Lambda 関数名**: `asken-garmin-sync`
+- **実行スケジュール**: 30分〜1時間間隔（EventBridge Scheduler）
+- **同時実行数制限**: 1（Garmin トークンの並行書き込み破壊防止）
+- **SAM テンプレート**: `template-garmin.yaml`（ルートに配置）
+
+## エラーハンドリング・ロギング
+
+- CloudWatch Logs へ JSON 構造化ログ出力（`src/utils/logging_config.py` の `JsonFormatter` を使用）
+- 認証エラーは例外として伝播させ Lambda を失敗扱いにする
+- 環境変数:
+  - `SECRET_NAME`: Secrets Manager シークレット名（省略時: `asken-garmin-sync`）
+  - `TARGET_DATE`: 同期対象日（省略時: JST 当日）
+
+## モジュール構成
+
+```
+src/asken_garmin_sync/
+├── __init__.py
+├── handler.py          # Lambda ハンドラー
+├── sync.py             # 同期ロジック（メインフロー）
+├── asken_client.py     # あすけんスクレイピングクライアント
+├── garmin_client.py    # Garmin Connect クライアント
+├── models.py           # データモデル
+├── config.py           # 設定・Secrets Manager アクセス・トークン永続化
+└── logging_config.py   # src/utils/logging_config.py の re-export shim
+```
