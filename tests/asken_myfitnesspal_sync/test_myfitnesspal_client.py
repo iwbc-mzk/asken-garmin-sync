@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 import requests
+import requests as _requests_module
 import responses as responses_lib
 
 from asken_myfitnesspal_sync.models import MealNutrition, MealType
@@ -17,6 +18,7 @@ from asken_myfitnesspal_sync.myfitnesspal_client import (
     MfpAuthError,
     MfpError,
     MyFitnessPalClient,
+    _mfp_request_with_retry,
 )
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -76,14 +78,15 @@ class TestLogin:
         assert client._user_id == "99999"
 
     @responses_lib.activate
-    def test_login_page_fetch_failure(self) -> None:
+    def test_login_page_fetch_failure(self, mock_mfp_sleep) -> None:
         responses_lib.add(
             responses_lib.GET,
             _LOGIN_URL,
             body=requests.exceptions.ConnectionError("Connection error"),
         )
-        with pytest.raises(MfpError, match="ログインページへの接続に失敗しました"):
+        with pytest.raises(MfpError, match="MFP リクエストが"):
             MyFitnessPalClient("user@example.com", "password")
+        assert mock_mfp_sleep.call_count == 3
 
     @responses_lib.activate
     def test_login_page_missing_csrf_token(self) -> None:
@@ -97,15 +100,16 @@ class TestLogin:
             MyFitnessPalClient("user@example.com", "password")
 
     @responses_lib.activate
-    def test_login_post_failure(self) -> None:
+    def test_login_post_failure(self, mock_mfp_sleep) -> None:
         responses_lib.add(responses_lib.GET, _LOGIN_URL, body=_MFP_LOGIN_PAGE, status=200)
         responses_lib.add(
             responses_lib.POST,
             _LOGIN_URL,
             body=requests.exceptions.ConnectionError("Network error"),
         )
-        with pytest.raises(MfpError, match="ログインリクエストへの接続に失敗しました"):
+        with pytest.raises(MfpError, match="MFP リクエストが"):
             MyFitnessPalClient("user@example.com", "password")
+        assert mock_mfp_sleep.call_count == 3
 
     @responses_lib.activate
     def test_auth_token_non_json_response_raises_auth_error(self) -> None:
@@ -160,6 +164,57 @@ class TestLogin:
         with pytest.raises(MfpAuthError):
             MyFitnessPalClient("user@example.com", "password")
 
+    @responses_lib.activate
+    def test_login_page_get_429_retries_then_succeeds(self, mock_mfp_sleep) -> None:
+        """ログインページ GET で 429 を受けた場合、リトライして成功すること."""
+        responses_lib.add(responses_lib.GET, _LOGIN_URL, status=429)
+        responses_lib.add(responses_lib.GET, _LOGIN_URL, body=_MFP_LOGIN_PAGE, status=200)
+        responses_lib.add(responses_lib.POST, _LOGIN_URL, body=_LOGIN_SUCCESS_HTML, status=200)
+        responses_lib.add(
+            responses_lib.GET,
+            _AUTH_TOKEN_URL,
+            body=_AUTH_TOKEN_JSON,
+            status=200,
+            content_type="application/json",
+        )
+        client = MyFitnessPalClient("user@example.com", "password")
+        assert client._access_token == "test_bearer_token"
+        mock_mfp_sleep.assert_called_once()
+
+    @responses_lib.activate
+    def test_login_post_429_retries_then_succeeds(self, mock_mfp_sleep) -> None:
+        """ログイン POST で 429 を受けた場合、リトライして成功すること."""
+        responses_lib.add(responses_lib.GET, _LOGIN_URL, body=_MFP_LOGIN_PAGE, status=200)
+        responses_lib.add(responses_lib.POST, _LOGIN_URL, status=429)
+        responses_lib.add(responses_lib.POST, _LOGIN_URL, body=_LOGIN_SUCCESS_HTML, status=200)
+        responses_lib.add(
+            responses_lib.GET,
+            _AUTH_TOKEN_URL,
+            body=_AUTH_TOKEN_JSON,
+            status=200,
+            content_type="application/json",
+        )
+        client = MyFitnessPalClient("user@example.com", "password")
+        assert client._access_token == "test_bearer_token"
+        mock_mfp_sleep.assert_called_once()
+
+    @responses_lib.activate
+    def test_auth_token_get_429_retries_then_succeeds(self, mock_mfp_sleep) -> None:
+        """auth_token GET で 429 を受けた場合、リトライして成功すること."""
+        responses_lib.add(responses_lib.GET, _LOGIN_URL, body=_MFP_LOGIN_PAGE, status=200)
+        responses_lib.add(responses_lib.POST, _LOGIN_URL, body=_LOGIN_SUCCESS_HTML, status=200)
+        responses_lib.add(responses_lib.GET, _AUTH_TOKEN_URL, status=429)
+        responses_lib.add(
+            responses_lib.GET,
+            _AUTH_TOKEN_URL,
+            body=_AUTH_TOKEN_JSON,
+            status=200,
+            content_type="application/json",
+        )
+        client = MyFitnessPalClient("user@example.com", "password")
+        assert client._access_token == "test_bearer_token"
+        mock_mfp_sleep.assert_called_once()
+
 
 class TestGetMealEntries:
     @responses_lib.activate
@@ -206,13 +261,14 @@ class TestGetMealEntries:
             client.get_meal_entries(TARGET_DATE, MealType.LUNCH)
 
     @responses_lib.activate
-    def test_get_meal_entries_5xx_raises_mfp_error(self) -> None:
+    def test_get_meal_entries_5xx_raises_mfp_error(self, mock_mfp_sleep) -> None:
         _add_login_mocks()
         client = MyFitnessPalClient("u@example.com", "pw")
 
         responses_lib.add(responses_lib.GET, _DIARY_URL, status=500)
         with pytest.raises(MfpError, match="HTTP 500"):
             client.get_meal_entries(TARGET_DATE, MealType.DINNER)
+        assert mock_mfp_sleep.call_count == 3
 
     @responses_lib.activate
     def test_get_meal_entries_non_json_raises_mfp_error(self) -> None:
@@ -238,7 +294,7 @@ class TestGetMealEntries:
             _DIARY_URL,
             body=requests.exceptions.Timeout("Timeout"),
         )
-        with pytest.raises(MfpError, match="日記データの取得に失敗しました"):
+        with pytest.raises(MfpError, match="MFP リクエストが"):
             client.get_meal_entries(TARGET_DATE, MealType.BREAKFAST)
 
     @responses_lib.activate
@@ -355,13 +411,14 @@ class TestAddMealEntry:
             client.add_meal_entry(TARGET_DATE, self._nutrition())
 
     @responses_lib.activate
-    def test_add_meal_entry_food_creation_5xx_raises_mfp_error(self) -> None:
+    def test_add_meal_entry_food_creation_5xx_raises_mfp_error(self, mock_mfp_sleep) -> None:
         _add_login_mocks()
         client = MyFitnessPalClient("u@example.com", "pw")
 
         responses_lib.add(responses_lib.POST, _FOODS_URL, status=500, body="Internal Error")
         with pytest.raises(MfpError, match="HTTP 500"):
             client.add_meal_entry(TARGET_DATE, self._nutrition())
+        assert mock_mfp_sleep.call_count == 3
 
     @responses_lib.activate
     def test_add_meal_entry_diary_401_raises_auth_error(self) -> None:
@@ -380,7 +437,7 @@ class TestAddMealEntry:
             client.add_meal_entry(TARGET_DATE, self._nutrition())
 
     @responses_lib.activate
-    def test_add_meal_entry_diary_5xx_raises_mfp_error(self) -> None:
+    def test_add_meal_entry_diary_5xx_raises_mfp_error(self, mock_mfp_sleep) -> None:
         _add_login_mocks()
         client = MyFitnessPalClient("u@example.com", "pw")
 
@@ -394,6 +451,7 @@ class TestAddMealEntry:
 
         with pytest.raises(MfpError, match="HTTP 503"):
             client.add_meal_entry(TARGET_DATE, self._nutrition())
+        assert mock_mfp_sleep.call_count == 3
 
     @responses_lib.activate
     def test_add_meal_entry_food_creation_network_error_raises_mfp_error(self) -> None:
@@ -405,7 +463,7 @@ class TestAddMealEntry:
             _FOODS_URL,
             body=requests.exceptions.ConnectionError("Network down"),
         )
-        with pytest.raises(MfpError, match="カスタム食品の作成に失敗しました"):
+        with pytest.raises(MfpError, match="MFP リクエストが"):
             client.add_meal_entry(TARGET_DATE, self._nutrition())
 
     @responses_lib.activate
@@ -424,7 +482,7 @@ class TestAddMealEntry:
             _DIARY_URL,
             body=requests.exceptions.Timeout("Timeout"),
         )
-        with pytest.raises(MfpError, match="日記エントリの登録に失敗しました"):
+        with pytest.raises(MfpError, match="MFP リクエストが"):
             client.add_meal_entry(TARGET_DATE, self._nutrition())
 
     @responses_lib.activate
@@ -515,7 +573,7 @@ class TestDeleteMealEntries:
             client.delete_meal_entries(TARGET_DATE, MealType.DINNER)
 
     @responses_lib.activate
-    def test_delete_meal_entries_5xx_raises_mfp_error(self) -> None:
+    def test_delete_meal_entries_5xx_raises_mfp_error(self, mock_mfp_sleep) -> None:
         _add_login_mocks()
         client = MyFitnessPalClient("u@example.com", "pw")
 
@@ -529,6 +587,7 @@ class TestDeleteMealEntries:
 
         with pytest.raises(MfpError, match="HTTP 500"):
             client.delete_meal_entries(TARGET_DATE, MealType.SNACKS)
+        assert mock_mfp_sleep.call_count == 3
 
     @responses_lib.activate
     def test_delete_meal_entries_skips_items_without_id(self) -> None:
@@ -560,5 +619,91 @@ class TestDeleteMealEntries:
             f"{_DIARY_URL}/e55",
             body=requests.exceptions.ConnectionError("Network down"),
         )
-        with pytest.raises(MfpError, match="日記エントリの削除に失敗しました"):
+        with pytest.raises(MfpError, match="MFP リクエストが"):
             client.delete_meal_entries(TARGET_DATE, MealType.LUNCH)
+
+
+_FAKE_URL = f"{_API_URL}/v2/test_retry"
+
+
+class TestMfpRequestWithRetry:
+    """_mfp_request_with_retry のリトライ戦略を直接テストする."""
+
+    @responses_lib.activate
+    def test_429_retries_up_to_3_times_then_raises(self, mock_mfp_sleep) -> None:
+        """429 が4回連続で返されたとき MfpError を送出し、3回スリープすること."""
+        for _ in range(4):
+            responses_lib.add(responses_lib.GET, _FAKE_URL, status=429)
+
+        with pytest.raises(MfpError, match="MFP リクエストが 4 回失敗しました"):
+            _mfp_request_with_retry(_requests_module.get, _FAKE_URL, timeout=5)
+
+        assert mock_mfp_sleep.call_count == 3
+
+    @responses_lib.activate
+    def test_5xx_retries_with_exponential_backoff(self, mock_mfp_sleep) -> None:
+        """5xx が続いた後に成功する場合、バックオフ遅延でリトライしてレスポンスを返すこと."""
+        responses_lib.add(responses_lib.GET, _FAKE_URL, status=503)
+        responses_lib.add(responses_lib.GET, _FAKE_URL, status=503)
+        responses_lib.add(responses_lib.GET, _FAKE_URL, status=200)
+
+        resp = _mfp_request_with_retry(_requests_module.get, _FAKE_URL, timeout=5)
+        assert resp.status_code == 200
+        assert mock_mfp_sleep.call_count == 2
+        # 指数バックオフ: 1.0, 2.0
+        mock_mfp_sleep.assert_any_call(1.0)
+        mock_mfp_sleep.assert_any_call(2.0)
+
+    @responses_lib.activate
+    def test_retry_after_header_respected(self, mock_mfp_sleep) -> None:
+        """429 に Retry-After ヘッダーが付いている場合、その値でスリープすること."""
+        responses_lib.add(
+            responses_lib.GET,
+            _FAKE_URL,
+            status=429,
+            headers={"Retry-After": "5"},
+        )
+        responses_lib.add(responses_lib.GET, _FAKE_URL, status=200)
+
+        resp = _mfp_request_with_retry(_requests_module.get, _FAKE_URL, timeout=5)
+        assert resp.status_code == 200
+        mock_mfp_sleep.assert_called_once_with(5.0)
+
+    @responses_lib.activate
+    def test_retry_after_zero_falls_back_to_exponential_backoff(self, mock_mfp_sleep) -> None:
+        """Retry-After: 0 は無効値として指数バックオフにフォールバックすること."""
+        responses_lib.add(
+            responses_lib.GET,
+            _FAKE_URL,
+            status=429,
+            headers={"Retry-After": "0"},
+        )
+        responses_lib.add(responses_lib.GET, _FAKE_URL, status=200)
+
+        _mfp_request_with_retry(_requests_module.get, _FAKE_URL, timeout=5)
+        mock_mfp_sleep.assert_called_once_with(1.0)  # 指数バックオフの1回目
+
+    @responses_lib.activate
+    def test_401_does_not_retry_raises_immediately(self, mock_mfp_sleep) -> None:
+        """401 は一切リトライせず即座に MfpAuthError を送出すること."""
+        responses_lib.add(responses_lib.GET, _FAKE_URL, status=401)
+
+        with pytest.raises(MfpAuthError):
+            _mfp_request_with_retry(_requests_module.get, _FAKE_URL, timeout=5)
+
+        mock_mfp_sleep.assert_not_called()
+
+    @responses_lib.activate
+    def test_connection_error_retries_then_raises(self, mock_mfp_sleep) -> None:
+        """接続エラーが4回続いたとき MfpError を送出し、3回スリープすること."""
+        for _ in range(4):
+            responses_lib.add(
+                responses_lib.GET,
+                _FAKE_URL,
+                body=_requests_module.exceptions.ConnectionError("Network down"),
+            )
+
+        with pytest.raises(MfpError, match="MFP リクエストが 4 回失敗しました"):
+            _mfp_request_with_retry(_requests_module.get, _FAKE_URL, timeout=5)
+
+        assert mock_mfp_sleep.call_count == 3

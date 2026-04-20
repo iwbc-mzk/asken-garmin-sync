@@ -10,7 +10,6 @@ import pytest
 from asken_garmin_sync.asken_client import AskenAuthError
 from asken_garmin_sync.garmin_client import GarminAuthError
 
-
 # ─── _get_target_date ────────────────────────────────────────────────────────
 
 

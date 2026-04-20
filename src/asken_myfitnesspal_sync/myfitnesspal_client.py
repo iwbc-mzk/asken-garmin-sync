@@ -59,6 +59,8 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from collections.abc import Callable
 from datetime import date
 from typing import Any, cast
 
@@ -89,6 +91,13 @@ _MEAL_POSITIONS: dict[MealType, int] = {
 
 _CUSTOM_FOOD_PREFIX = "あすけん同期"
 
+# リトライ設定（認証エラーはリトライしない）
+# max_retries=3 は「初回1回 + 最大3回リトライ = 合計最大4回試行」を意味する
+_MFP_MAX_RETRIES: int = 3
+_MFP_RETRY_BASE_DELAY: float = 1.0
+# HTTP 429（レート制限）と 5xx（サーバーエラー）はリトライ対象
+_MFP_RETRYABLE_STATUS: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+
 
 class MfpAuthError(Exception):
     """MyFitnessPal 認証エラー（リトライ不可）."""
@@ -96,6 +105,67 @@ class MfpAuthError(Exception):
 
 class MfpError(Exception):
     """MyFitnessPal 操作エラー."""
+
+
+def _mfp_request_with_retry(
+    fn: Callable[..., requests.Response],
+    *args: Any,
+    max_retries: int = _MFP_MAX_RETRIES,
+    **kwargs: Any,
+) -> requests.Response:
+    """HTTP 429/5xx および接続エラー時に指数バックオフでリトライする.
+
+    - 401: 即座に MfpAuthError を送出（リトライなし）
+    - 429/5xx: 指数バックオフでリトライ（Retry-After ヘッダーを尊重）
+    - 接続エラー/タイムアウト: 指数バックオフでリトライ
+    - その他の HTTP エラー: MfpError として即座に失敗
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            resp = fn(*args, **kwargs)
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            if attempt < max_retries:
+                delay = _MFP_RETRY_BASE_DELAY * (2**attempt)
+                logger.warning(
+                    "MFP 接続エラー (attempt %d/%d): %s — %.1f秒後にリトライ",
+                    attempt + 1,
+                    max_retries + 1,
+                    exc,
+                    delay,
+                )
+                time.sleep(delay)
+                continue
+            raise MfpError(
+                f"MFP リクエストが {max_retries + 1} 回失敗しました: {exc}"
+            ) from exc
+        except requests.RequestException as exc:
+            raise MfpError(f"MFP リクエストに失敗しました: {exc}") from exc
+
+        if resp.status_code == 401:
+            raise MfpAuthError("MFP 認証エラーが発生しました")
+
+        if resp.status_code in _MFP_RETRYABLE_STATUS:
+            if attempt < max_retries:
+                retry_after = resp.headers.get("Retry-After")
+                delay = _MFP_RETRY_BASE_DELAY * (2**attempt)
+                if retry_after and retry_after.isdigit() and int(retry_after) > 0:
+                    delay = float(retry_after)
+                logger.warning(
+                    "MFP HTTP %d (attempt %d/%d) — %.1f秒後にリトライ",
+                    resp.status_code,
+                    attempt + 1,
+                    max_retries + 1,
+                    delay,
+                )
+                time.sleep(delay)
+                continue
+            raise MfpError(
+                f"MFP リクエストが {max_retries + 1} 回失敗しました: HTTP {resp.status_code}"
+            )
+
+        return resp
+
+    raise MfpError("リトライ上限に達しました")  # unreachable
 
 
 class MyFitnessPalClient:
@@ -110,15 +180,14 @@ class MyFitnessPalClient:
 
     def _login(self, email: str, password: str) -> None:
         """フォームベースのログインと Bearer トークン取得."""
-        try:
-            login_page = self._session.get(f"{_BASE_URL}/user/login", timeout=30)
-            login_page.raise_for_status()
-        except (requests.ConnectionError, requests.Timeout) as exc:
-            raise MfpError(f"ログインページへの接続に失敗しました: {exc}") from exc
-        except requests.HTTPError as exc:
-            raise MfpAuthError(f"ログインページの取得に失敗しました: {exc}") from exc
-        except requests.RequestException as exc:
-            raise MfpError(f"ログインページの取得に失敗しました: {exc}") from exc
+        # ステップ1: ログインページ取得（429/5xx はリトライ）
+        login_page = _mfp_request_with_retry(
+            self._session.get, f"{_BASE_URL}/user/login", timeout=30
+        )
+        if not login_page.ok:
+            raise MfpAuthError(
+                f"ログインページの取得に失敗しました: HTTP {login_page.status_code}"
+            )
 
         soup = BeautifulSoup(login_page.text, "lxml")
         token_input = soup.find("input", {"name": "authenticity_token"})
@@ -132,38 +201,32 @@ class MyFitnessPalClient:
                 "ログインページの authenticity_token に value 属性がありません"
             )
 
-        try:
-            resp = self._session.post(
-                f"{_BASE_URL}/user/login",
-                data={
-                    "user[email]": email,
-                    "user[password]": password,
-                    "authenticity_token": authenticity_token,
-                },
-                timeout=30,
-                allow_redirects=True,
-            )
-            resp.raise_for_status()
-        except (requests.ConnectionError, requests.Timeout) as exc:
-            raise MfpError(f"ログインリクエストへの接続に失敗しました: {exc}") from exc
-        except requests.HTTPError as exc:
-            raise MfpAuthError(f"ログインリクエストに失敗しました: {exc}") from exc
-        except requests.RequestException as exc:
-            raise MfpError(f"ログインリクエストに失敗しました: {exc}") from exc
+        # ステップ2: ログインフォーム送信（429/5xx はリトライ）
+        resp = _mfp_request_with_retry(
+            self._session.post,
+            f"{_BASE_URL}/user/login",
+            data={
+                "user[email]": email,
+                "user[password]": password,
+                "authenticity_token": authenticity_token,
+            },
+            timeout=30,
+            allow_redirects=True,
+        )
+        if not resp.ok:
+            raise MfpAuthError(f"ログインリクエストに失敗しました: HTTP {resp.status_code}")
 
-        try:
-            auth_resp = self._session.get(
-                f"{_BASE_URL}/user/auth_token",
-                params={"refresh": "true"},
-                timeout=30,
+        # ステップ3: Bearer トークン取得（429/5xx はリトライ、401 は即座失敗）
+        auth_resp = _mfp_request_with_retry(
+            self._session.get,
+            f"{_BASE_URL}/user/auth_token",
+            params={"refresh": "true"},
+            timeout=30,
+        )
+        if not auth_resp.ok:
+            raise MfpAuthError(
+                f"認証トークンの取得に失敗しました: HTTP {auth_resp.status_code}"
             )
-            auth_resp.raise_for_status()
-        except (requests.ConnectionError, requests.Timeout) as exc:
-            raise MfpError(f"認証トークン取得への接続に失敗しました: {exc}") from exc
-        except requests.HTTPError as exc:
-            raise MfpAuthError(f"認証トークンの取得に失敗しました: {exc}") from exc
-        except requests.RequestException as exc:
-            raise MfpError(f"認証トークンの取得に失敗しました: {exc}") from exc
 
         try:
             auth_data = auth_resp.json()
@@ -187,25 +250,20 @@ class MyFitnessPalClient:
 
     def _get_diary_items(self, target_date: date) -> list[dict[str, Any]]:
         """指定日の全食事エントリを取得する（内部用）."""
-        try:
-            resp = self._session.get(
-                f"{_API_URL}/v2/diary",
-                headers=self._api_headers(),
-                params={
-                    "entry_date": target_date.isoformat(),
-                    "types": "food_entry",
-                    "fields[]": "nutritional_contents",
-                    "user_id": self._user_id,
-                },
-                timeout=30,
-            )
-        except requests.RequestException as exc:
-            raise MfpError(f"日記データの取得に失敗しました: {exc}") from exc
-
-        if resp.status_code == 401:
-            raise MfpAuthError("日記取得で認証エラーが発生しました")
+        resp = _mfp_request_with_retry(
+            self._session.get,
+            f"{_API_URL}/v2/diary",
+            headers=self._api_headers(),
+            params={
+                "entry_date": target_date.isoformat(),
+                "types": "food_entry",
+                "fields[]": "nutritional_contents",
+                "user_id": self._user_id,
+            },
+            timeout=30,
+        )
         if not resp.ok:
-            raise MfpError(f"日記取得に失敗しました: HTTP {resp.status_code}")
+            raise MfpError(f"日記データの取得に失敗しました: HTTP {resp.status_code}")
 
         try:
             return cast(list[dict[str, Any]], resp.json().get("items") or [])
@@ -260,18 +318,13 @@ class MyFitnessPalClient:
             ],
         }
 
-        try:
-            resp = self._session.post(
-                f"{_API_URL}/v2/foods",
-                headers=self._api_headers(),
-                json=food_payload,
-                timeout=30,
-            )
-        except requests.RequestException as exc:
-            raise MfpError(f"カスタム食品の作成に失敗しました: {exc}") from exc
-
-        if resp.status_code == 401:
-            raise MfpAuthError("カスタム食品作成で認証エラーが発生しました")
+        resp = _mfp_request_with_retry(
+            self._session.post,
+            f"{_API_URL}/v2/foods",
+            headers=self._api_headers(),
+            json=food_payload,
+            timeout=30,
+        )
         if not resp.ok:
             raise MfpError(
                 f"カスタム食品の作成に失敗しました: HTTP {resp.status_code} - {resp.text[:200]}"
@@ -314,18 +367,13 @@ class MyFitnessPalClient:
             },
         }
 
-        try:
-            resp = self._session.post(
-                f"{_API_URL}/v2/diary",
-                headers=self._api_headers(),
-                json={"items": [entry]},
-                timeout=30,
-            )
-        except requests.RequestException as exc:
-            raise MfpError(f"日記エントリの登録に失敗しました: {exc}") from exc
-
-        if resp.status_code == 401:
-            raise MfpAuthError("日記エントリ登録で認証エラーが発生しました")
+        resp = _mfp_request_with_retry(
+            self._session.post,
+            f"{_API_URL}/v2/diary",
+            headers=self._api_headers(),
+            json={"items": [entry]},
+            timeout=30,
+        )
         if resp.status_code not in (200, 201):
             raise MfpError(
                 f"日記エントリの登録に失敗しました: HTTP {resp.status_code} - {resp.text[:200]}"
@@ -360,17 +408,12 @@ class MyFitnessPalClient:
         # 呼び出し元 sync.py は食事区分単位でエラーを WARNING に留め、
         # 当該区分のみ登録をスキップするため不整合は最小限に抑えられる。
         for entry_id in entry_ids:
-            try:
-                resp = self._session.delete(
-                    f"{_API_URL}/v2/diary/{entry_id}",
-                    headers=self._api_headers(),
-                    timeout=30,
-                )
-            except requests.RequestException as exc:
-                raise MfpError(f"日記エントリの削除に失敗しました: {exc}") from exc
-
-            if resp.status_code == 401:
-                raise MfpAuthError("日記エントリ削除で認証エラーが発生しました")
+            resp = _mfp_request_with_retry(
+                self._session.delete,
+                f"{_API_URL}/v2/diary/{entry_id}",
+                headers=self._api_headers(),
+                timeout=30,
+            )
             if resp.status_code not in (200, 204):
                 raise MfpError(
                     f"日記エントリの削除に失敗しました: HTTP {resp.status_code} - {resp.text[:200]}"

@@ -7,6 +7,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 import pytest
+from garminconnect import (
+    GarminConnectAuthenticationError,
+    GarminConnectConnectionError,
+    GarminConnectTooManyRequestsError,
+)
 
 from asken_garmin_sync.garmin_client import (
     GarminAuthError,
@@ -21,16 +26,6 @@ from asken_garmin_sync.models import ActivityCalories, BodyComposition
 _EMAIL = "test@example.com"
 _PASSWORD = "secret"
 _DATE = date(2026, 4, 13)
-
-
-# ─── garminconnect 例外クラスをインポート ────────────────────────────────────
-
-from garminconnect import (
-    GarminConnectAuthenticationError,
-    GarminConnectConnectionError,
-    GarminConnectTooManyRequestsError,
-)
-
 
 # ─── フィクスチャ ──────────────────────────────────────────────────────────────
 

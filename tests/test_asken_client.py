@@ -1,9 +1,7 @@
 """asken_client のユニットテスト."""
 from __future__ import annotations
 
-import json
 from datetime import date
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,8 +12,6 @@ from asken_garmin_sync.asken_client import (
     AskenError,
     _request_with_retry,
 )
-from asken_garmin_sync.models import BodyComposition
-
 
 # ─── _request_with_retry ────────────────────────────────────────────────────
 
@@ -65,7 +61,7 @@ class TestRequestWithRetry:
             mock_resp,
         ]
 
-        with patch("asken_garmin_sync.asken_client.time.sleep"):
+        with patch("utils.asken_base_client.time.sleep"):
             result = _request_with_retry(mock_fn, "url", max_retries=2)
         assert result is mock_resp
         assert mock_fn.call_count == 2
@@ -75,7 +71,7 @@ class TestRequestWithRetry:
 
         mock_fn = MagicMock(side_effect=requests.ConnectionError("timeout"))
 
-        with patch("asken_garmin_sync.asken_client.time.sleep"):
+        with patch("utils.asken_base_client.time.sleep"):
             with pytest.raises(AskenError, match="失敗しました"):
                 _request_with_retry(mock_fn, "url", max_retries=2)
         assert mock_fn.call_count == 3
@@ -122,7 +118,7 @@ class TestAskenClientLogin:
         login_page = fixture_html("login_page.html")
         success_page = fixture_html("login_success.html")
 
-        with patch("asken_garmin_sync.asken_client.requests.Session") as mock_session_cls:
+        with patch("utils.asken_base_client.requests.Session") as mock_session_cls:
             session = self._make_session_mock(
                 login_page, success_page, "https://www.asken.jp/"
             )
@@ -133,7 +129,7 @@ class TestAskenClientLogin:
     def test_login_fails_when_redirected_to_login(self, fixture_html):
         login_page = fixture_html("login_page.html")
 
-        with patch("asken_garmin_sync.asken_client.requests.Session") as mock_session_cls:
+        with patch("utils.asken_base_client.requests.Session") as mock_session_cls:
             session = self._make_session_mock(
                 login_page,
                 "<html>ログインに失敗</html>",
@@ -147,7 +143,7 @@ class TestAskenClientLogin:
     def test_login_fails_when_no_logout_link(self, fixture_html):
         login_page = fixture_html("login_page.html")
 
-        with patch("asken_garmin_sync.asken_client.requests.Session") as mock_session_cls:
+        with patch("utils.asken_base_client.requests.Session") as mock_session_cls:
             session = self._make_session_mock(
                 login_page,
                 "<html><body>エラー</body></html>",
@@ -164,8 +160,8 @@ class TestAskenClientLogin:
         """
         import requests as req
 
-        with patch("asken_garmin_sync.asken_client.requests.Session") as mock_session_cls:
-            with patch("asken_garmin_sync.asken_client.time.sleep"):
+        with patch("utils.asken_base_client.requests.Session") as mock_session_cls:
+            with patch("utils.asken_base_client.time.sleep"):
                 session = MagicMock()
                 session.get.side_effect = req.ConnectionError("connection refused")
                 mock_session_cls.return_value = session
@@ -180,8 +176,8 @@ class TestAskenClientLogin:
         """
         import requests as req
 
-        with patch("asken_garmin_sync.asken_client.requests.Session") as mock_session_cls:
-            with patch("asken_garmin_sync.asken_client.time.sleep"):
+        with patch("utils.asken_base_client.requests.Session") as mock_session_cls:
+            with patch("utils.asken_base_client.time.sleep"):
                 session = MagicMock()
                 get_resp = MagicMock()
                 get_resp.status_code = 200
@@ -198,7 +194,7 @@ class TestAskenClientLogin:
     def test_login_fails_when_csrf_token_missing(self):
         html_no_token = "<html><body><form id='indexForm'></form></body></html>"
 
-        with patch("asken_garmin_sync.asken_client.requests.Session") as mock_session_cls:
+        with patch("utils.asken_base_client.requests.Session") as mock_session_cls:
             session = MagicMock()
             get_resp = MagicMock()
             get_resp.status_code = 200
@@ -262,7 +258,7 @@ class TestGetBodyComposition:
         client = self._make_client()
         client._session.get.side_effect = req.ConnectionError("timeout")
 
-        with patch("asken_garmin_sync.asken_client.time.sleep"):
+        with patch("utils.asken_base_client.time.sleep"):
             with pytest.raises(AskenError):
                 client.get_body_composition(date(2026, 4, 13))
 
@@ -405,7 +401,7 @@ class TestDeleteExerciseEntry:
         client = self._make_client()
         client._session.get.side_effect = req.ConnectionError("connection reset")
 
-        with patch("asken_garmin_sync.asken_client.time.sleep"):
+        with patch("utils.asken_base_client.time.sleep"):
             with pytest.raises(AskenError, match="失敗しました"):
                 client._delete_exercise_entry(date(2026, 4, 13), "0", "authcode_abc")
 
@@ -448,7 +444,7 @@ class TestAddExerciseEntry:
         client = self._make_client()
         client._session.post.side_effect = req.ConnectionError("connection reset")
 
-        with patch("asken_garmin_sync.asken_client.time.sleep"):
+        with patch("utils.asken_base_client.time.sleep"):
             with pytest.raises(AskenError, match="失敗しました"):
                 client._add_exercise_entry(date(2026, 4, 13), exercise_id=1, amount=30)
 
@@ -472,13 +468,12 @@ class TestRegisterActivityCalories:
         client = self._make_client()
         client._session.get.side_effect = req.ConnectionError("timeout")
 
-        with patch("asken_garmin_sync.asken_client.time.sleep"):
+        with patch("utils.asken_base_client.time.sleep"):
             with pytest.raises(AskenError):
                 client.register_activity_calories(date(2026, 4, 13), calories=100)
 
     def test_network_error_on_add_entry_raises(self):
         """_add_exercise_entry の POST ネットワーク障害は AskenError。"""
-        import requests as req
 
         client = self._make_client()
         with (
@@ -508,7 +503,7 @@ class TestRegisterActivityCalories:
             patch.object(client, "_get_exercise_entries", return_value=[("0", "auth1", "1061")]),
             patch.object(client, "_delete_exercise_entry") as mock_del,
             patch.object(client, "_add_exercise_entry") as mock_add,
-            patch("asken_garmin_sync.asken_client.time.sleep"),
+            patch("utils.asken_base_client.time.sleep"),
         ):
             client.register_activity_calories(
                 date(2026, 4, 13), calories=120, cal_per_min=4.0
@@ -540,7 +535,7 @@ class TestRegisterActivityCalories:
             patch.object(client, "_get_exercise_entries", return_value=entries),
             patch.object(client, "_delete_exercise_entry") as mock_del,
             patch.object(client, "_add_exercise_entry"),
-            patch("asken_garmin_sync.asken_client.time.sleep"),
+            patch("utils.asken_base_client.time.sleep"),
         ):
             client.register_activity_calories(date(2026, 4, 13), calories=120, cal_per_min=4.0)
             mock_del.assert_called_once_with(date(2026, 4, 13), "0", "auth_script")

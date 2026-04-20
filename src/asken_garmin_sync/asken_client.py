@@ -21,6 +21,10 @@ from utils.asken_base_client import (
 
 from .models import BodyComposition
 
+# re-export（テストおよび後方互換用）
+__all__ = ["AskenAuthError", "AskenError", "AskenClient", "_request_with_retry"]
+_request_with_retry = request_with_retry
+
 logger = logging.getLogger(__name__)
 
 _COMMENT_URL = f"{_BASE_URL}/wsp/comment/{{date}}"

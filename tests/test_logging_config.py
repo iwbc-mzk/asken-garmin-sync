@@ -5,10 +5,7 @@ import json
 import logging
 import re
 
-import pytest
-
 from asken_garmin_sync.logging_config import JsonFormatter, configure_logging
-
 
 # ── JsonFormatter ────────────────────────────────────────────────────────────
 
