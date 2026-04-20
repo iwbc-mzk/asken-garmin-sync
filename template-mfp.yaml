@@ -1,20 +1,18 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  asken-garmin-sync
-  あすけん ↔ Garmin Connect 双方向データ同期 Lambda
+  asken-myfitnesspal-sync
+  あすけん → MyFitnessPal 食事データ同期 Lambda
 
 # ─── グローバル設定 ──────────────────────────────────────────────────────────
 Globals:
   Function:
     Runtime: python3.12
     # Timeout の根拠（現実的な最悪ケース想定）:
-    #   あすけんログイン: GET 30s + POST 30s = 60s（リトライなし）
-    #   各 HTTP 操作（最大3回試行）: 30s × 3回 + バックオフ（1+2）s = 93s/操作
-    #   実用上の主要ボトルネック2操作: ログイン 60s + 体重同期 93s + カロリー同期 93s = 246s
-    #   安全マージンを加えて 300s に設定。
-    #   ※ 4操作すべてが最悪ケースに当たる確率は極めて低い。
-    #   ※ Lambda の最大タイムアウトは 900s。
+    #   あすけんログイン: GET 30s + POST 30s = 60s
+    #   MFP ログイン: 30s
+    #   食事区分ごとの取得・登録（4区分 × 最大3回リトライ）: 93s × 4 = 372s
+    #   実用上の主要ボトルネックは少数操作のため 300s で十分。
     Timeout: 300
     MemorySize: 256      # requests + BeautifulSoup + lxml のメモリ使用量を考慮
     Environment:
@@ -25,31 +23,29 @@ Globals:
 Parameters:
   SecretName:
     Type: String
-    Default: asken-garmin-sync
+    Default: asken-myfitnesspal-sync/credentials
     # IAM リソース ARN に直接埋め込まれるため、使用可能文字を英数字・記号に制限する
     AllowedPattern: '^[a-zA-Z0-9/_+=.@-]+$'
     ConstraintDescription: >
       英数字および /_+=.@- のみ使用可能です（スペース・特殊文字不可）。
     Description: >
       AWS Secrets Manager のシークレット名。
-      asken_email / asken_password / garmin_email / garmin_password /
-      garmin_tokens キーを含む JSON シークレットを事前に作成すること。
+      asken_email / asken_password / myfitnesspal_email / myfitnesspal_password
+      キーを含む JSON シークレットを事前に作成すること。
 
 # ─── リソース ────────────────────────────────────────────────────────────────
 Resources:
 
   # CloudWatch ロググループ（保持期間 30 日）
-  # SyncFunction より先に定義し、LoggingConfig で参照することで
-  # Lambda 側のロググループ自動作成を抑制して保持期間を確実に設定する。
+  # SyncFunction より先に定義し、DependsOn で先行作成を保証することで
+  # Lambda 側のロググループ自動作成より先に保持期間 30 日設定済みのロググループが
+  # 存在する状態にする。
   # ⚠️ LogGroupName は SyncFunction.Properties.FunctionName と必ず一致させること。
   #   どちらかを変更した場合はもう一方も必ず更新する（2箇所の値を同期させる）。
-  #   例: FunctionName を "my-sync" に変更 → LogGroupName を "/aws/lambda/my-sync" に変更。
-  #   注: LogGroupName を !Sub '/aws/lambda/${SyncFunction}' で自動参照する構成は
-  #   SyncFunction → SyncFunctionLogGroup の依存と循環するため採用できない。
   SyncFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /aws/lambda/asken-garmin-sync
+      LogGroupName: /aws/lambda/asken-myfitnesspal-sync
       RetentionInDays: 30
 
   # Lambda 関数
@@ -58,48 +54,63 @@ Resources:
     # SyncFunctionLogGroup を先に作成することで Lambda のロググループ自動作成より
     # 先に保持期間 30 日設定済みのロググループが存在する状態にする。
     DependsOn: SyncFunctionLogGroup
+    Metadata:
+      BuildProperties:
+        # garminconnect を含まない MFP 専用の requirements ファイルを使用する。
+        # ⚠️ RequirementsFile は SAM CLI >= 1.111.0 が必要。
+        RequirementsFile: requirements_mfp.txt
     Properties:
-      FunctionName: asken-garmin-sync
+      FunctionName: asken-myfitnesspal-sync
       # src/ レイアウトのため CodeUri を src に設定する。
-      # SAM は src/requirements.txt を参照して依存パッケージをインストールし、
-      # src/asken_garmin_sync/ を /var/task/asken_garmin_sync/ として配置する。
+      # SAM は src/requirements_mfp.txt を参照して依存パッケージをインストールし、
+      # src/asken_myfitnesspal_sync/ を /var/task/asken_myfitnesspal_sync/ として配置する。
       CodeUri: src/
-      Handler: asken_garmin_sync.handler.lambda_handler
-      Description: あすけん ↔ Garmin Connect 双方向データ同期
+      Handler: asken_myfitnesspal_sync.handler.lambda_handler
+      Description: あすけん → MyFitnessPal 食事データ同期
 
-      # 同時実行数を 1 に制限:
-      # config.save_garmin_tokens() は read-modify-write であり
-      # AWS Secrets Manager に CAS API がないため並行実行によるトークン破壊を防ぐ。
+      # 同時実行数を 1 に制限（重複実行防止）
       ReservedConcurrentExecutions: 1
 
       Policies:
         # Lambda 基本実行ロール（CloudWatch Logs への書き込み）
         - AWSLambdaBasicExecutionRole
-        # Secrets Manager アクセス（認証情報の読み取り + Garmin トークンの書き戻し）
+        # Secrets Manager アクセス（認証情報の読み取りのみ）
         - Statement:
-            - Sid: SecretsManagerReadWrite
+            - Sid: SecretsManagerReadOnly
               Effect: Allow
               Action:
-                - secretsmanager:GetSecretValue    # 認証情報・Garmin トークンの読み取り
-                - secretsmanager:PutSecretValue    # Garmin トークンの書き戻し
-                - secretsmanager:DescribeSecret    # シークレット存在確認・メタデータ取得
+                - secretsmanager:GetSecretValue    # 認証情報の読み取り
               # Secrets Manager は ARN 末尾に 6 文字のランダムサフィックスを付与する
               Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretName}-*'
 
       Events:
-        SyncSchedule:
+        # 毎時 0 分に実行（JST・UTC 共通: 毎時 0 分）
+        HourlySchedule:
           Type: ScheduleV2
           Properties:
-            Name: asken-garmin-sync-schedule
-            ScheduleExpression: rate(30 minutes)
+            Name: asken-myfitnesspal-sync-hourly
+            ScheduleExpression: 'cron(0 * * * ? *)'
             State: ENABLED
-            Description: あすけん ↔ Garmin Connect 30分間隔同期
-            # ScheduleV2 の必須プロパティ。OFF = スケジュール時刻に正確に実行。
+            Description: あすけん → MyFitnessPal 毎時同期
             FlexibleTimeWindow:
               Mode: 'OFF'
             # Scheduler レベルのリトライを無効化。
-            # Lambda 実行失敗時は次の30分スケジュールを待つ。
+            # Lambda 実行失敗時は次のスケジュールを待つ。
             # MaximumEventAgeInSeconds は仕様上 60 以上が必須のため最小値を設定。
+            RetryPolicy:
+              MaximumRetryAttempts: 0
+              MaximumEventAgeInSeconds: 60
+
+        # 毎日 23:59 JST（= 14:59 UTC）に実行
+        DailySchedule:
+          Type: ScheduleV2
+          Properties:
+            Name: asken-myfitnesspal-sync-daily
+            ScheduleExpression: 'cron(59 14 * * ? *)'
+            State: ENABLED
+            Description: あすけん → MyFitnessPal 毎日 23:59 JST 同期
+            FlexibleTimeWindow:
+              Mode: 'OFF'
             RetryPolicy:
               MaximumRetryAttempts: 0
               MaximumEventAgeInSeconds: 60

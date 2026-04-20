@@ -3,13 +3,20 @@
 
 version = 0.1
 
+# ─── asken-garmin-sync ───────────────────────────────────────────────────────
+# ⚠️ 要件: SAM CLI >= 1.111.0（RequirementsFile 対応バージョン）
+#   template-garmin.yaml / template-mfp.yaml の Metadata.BuildProperties.RequirementsFile を
+#   使用しているため、古い SAM CLI では RequirementsFile が無視され、
+#   garmin Lambda が起動時に ImportError で停止する。
+#   確認方法: sam --version  / アップグレード: pip install --upgrade aws-sam-cli
 [default.global.parameters]
 stack_name = "asken-garmin-sync"
 region = "ap-northeast-1"
 
 [default.build.parameters]
-cached = true
-parallel = true
+cached        = true
+parallel      = true
+template_file = "template-garmin.yaml"
 # use_container = true is required on Windows/macOS to build compiled packages
 # (e.g. lxml) for the Lambda runtime (Amazon Linux 2023).
 # Requires Docker to be running: docker run --rm hello-world
@@ -29,3 +36,26 @@ image_repositories = []
 
 [default.sync.parameters]
 watch = true
+
+# ─── asken-myfitnesspal-sync ─────────────────────────────────────────────────
+# 使用方法:
+#   sam build --config-env mfp
+#   sam deploy --config-env mfp
+[mfp.global.parameters]
+stack_name = "asken-myfitnesspal-sync"
+region     = "ap-northeast-1"
+
+[mfp.build.parameters]
+cached        = true
+parallel      = true
+use_container = true
+template_file = "template-mfp.yaml"
+
+[mfp.deploy.parameters]
+capabilities        = "CAPABILITY_IAM"
+confirm_changeset   = true
+resolve_s3          = true
+s3_prefix           = "asken-myfitnesspal-sync"
+profile             = "default"
+parameter_overrides = "SecretName=\"asken-myfitnesspal-sync/credentials\""
+image_repositories  = []

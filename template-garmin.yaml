@@ -1,0 +1,128 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  asken-garmin-sync
+  あすけん ↔ Garmin Connect 双方向データ同期 Lambda
+
+# ─── グローバル設定 ──────────────────────────────────────────────────────────
+Globals:
+  Function:
+    Runtime: python3.12
+    # Timeout の根拠（現実的な最悪ケース想定）:
+    #   あすけんログイン: GET 30s + POST 30s = 60s（リトライなし）
+    #   各 HTTP 操作（最大3回試行）: 30s × 3回 + バックオフ（1+2）s = 93s/操作
+    #   実用上の主要ボトルネック2操作: ログイン 60s + 体重同期 93s + カロリー同期 93s = 246s
+    #   安全マージンを加えて 300s に設定。
+    #   ※ 4操作すべてが最悪ケースに当たる確率は極めて低い。
+    #   ※ Lambda の最大タイムアウトは 900s。
+    Timeout: 300
+    MemorySize: 256      # requests + BeautifulSoup + lxml のメモリ使用量を考慮
+    Environment:
+      Variables:
+        SECRET_NAME: !Ref SecretName
+
+# ─── パラメータ ──────────────────────────────────────────────────────────────
+Parameters:
+  SecretName:
+    Type: String
+    Default: asken-garmin-sync
+    # IAM リソース ARN に直接埋め込まれるため、使用可能文字を英数字・記号に制限する
+    AllowedPattern: '^[a-zA-Z0-9/_+=.@-]+$'
+    ConstraintDescription: >
+      英数字および /_+=.@- のみ使用可能です（スペース・特殊文字不可）。
+    Description: >
+      AWS Secrets Manager のシークレット名。
+      asken_email / asken_password / garmin_email / garmin_password /
+      garmin_tokens キーを含む JSON シークレットを事前に作成すること。
+
+# ─── リソース ────────────────────────────────────────────────────────────────
+Resources:
+
+  # CloudWatch ロググループ（保持期間 30 日）
+  # SyncFunction より先に定義し、LoggingConfig で参照することで
+  # Lambda 側のロググループ自動作成を抑制して保持期間を確実に設定する。
+  # ⚠️ LogGroupName は SyncFunction.Properties.FunctionName と必ず一致させること。
+  #   どちらかを変更した場合はもう一方も必ず更新する（2箇所の値を同期させる）。
+  #   例: FunctionName を "my-sync" に変更 → LogGroupName を "/aws/lambda/my-sync" に変更。
+  #   注: LogGroupName を !Sub '/aws/lambda/${SyncFunction}' で自動参照する構成は
+  #   SyncFunction → SyncFunctionLogGroup の依存と循環するため採用できない。
+  SyncFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/asken-garmin-sync
+      RetentionInDays: 30
+
+  # Lambda 関数
+  SyncFunction:
+    Type: AWS::Serverless::Function
+    # SyncFunctionLogGroup を先に作成することで Lambda のロググループ自動作成より
+    # 先に保持期間 30 日設定済みのロググループが存在する状態にする。
+    DependsOn: SyncFunctionLogGroup
+    Metadata:
+      BuildProperties:
+        # garminconnect は MFP Lambda に不要なため garmin 専用の requirements ファイルを使用する。
+        # src/requirements_mfp.txt（MFP 専用）には garminconnect を含めず、
+        # src/requirements_garmin.txt にのみ追加してデプロイパッケージを分離する。
+        # ⚠️ RequirementsFile は SAM CLI >= 1.111.0 が必要。
+        #   旧バージョンでは無視され garmin Lambda が ImportError で停止するため、
+        #   sam --version で確認の上 pip install --upgrade aws-sam-cli でアップグレードすること。
+        RequirementsFile: requirements_garmin.txt
+    Properties:
+      FunctionName: asken-garmin-sync
+      # src/ レイアウトのため CodeUri を src に設定する。
+      # SAM は src/requirements_garmin.txt を参照して依存パッケージをインストールし、
+      # src/asken_garmin_sync/ を /var/task/asken_garmin_sync/ として配置する。
+      CodeUri: src/
+      Handler: asken_garmin_sync.handler.lambda_handler
+      Description: あすけん ↔ Garmin Connect 双方向データ同期
+
+      # 同時実行数を 1 に制限:
+      # config.save_garmin_tokens() は read-modify-write であり
+      # AWS Secrets Manager に CAS API がないため並行実行によるトークン破壊を防ぐ。
+      ReservedConcurrentExecutions: 1
+
+      Policies:
+        # Lambda 基本実行ロール（CloudWatch Logs への書き込み）
+        - AWSLambdaBasicExecutionRole
+        # Secrets Manager アクセス（認証情報の読み取り + Garmin トークンの書き戻し）
+        - Statement:
+            - Sid: SecretsManagerReadWrite
+              Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue    # 認証情報・Garmin トークンの読み取り
+                - secretsmanager:PutSecretValue    # Garmin トークンの書き戻し
+                - secretsmanager:DescribeSecret    # シークレット存在確認・メタデータ取得
+              # Secrets Manager は ARN 末尾に 6 文字のランダムサフィックスを付与する
+              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretName}-*'
+
+      Events:
+        SyncSchedule:
+          Type: ScheduleV2
+          Properties:
+            Name: asken-garmin-sync-schedule
+            ScheduleExpression: rate(30 minutes)
+            State: ENABLED
+            Description: あすけん ↔ Garmin Connect 30分間隔同期
+            # ScheduleV2 の必須プロパティ。OFF = スケジュール時刻に正確に実行。
+            FlexibleTimeWindow:
+              Mode: 'OFF'
+            # Scheduler レベルのリトライを無効化。
+            # Lambda 実行失敗時は次の30分スケジュールを待つ。
+            # MaximumEventAgeInSeconds は仕様上 60 以上が必須のため最小値を設定。
+            RetryPolicy:
+              MaximumRetryAttempts: 0
+              MaximumEventAgeInSeconds: 60
+
+# ─── 出力 ────────────────────────────────────────────────────────────────────
+Outputs:
+  SyncFunctionArn:
+    Description: 同期 Lambda 関数の ARN
+    Value: !GetAtt SyncFunction.Arn
+
+  SyncFunctionName:
+    Description: 同期 Lambda 関数名
+    Value: !Ref SyncFunction
+
+  LogGroupName:
+    Description: CloudWatch ロググループ名
+    Value: !Ref SyncFunctionLogGroup

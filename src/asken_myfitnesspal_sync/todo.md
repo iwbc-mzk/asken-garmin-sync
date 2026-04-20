@@ -110,14 +110,14 @@
 
 ## Phase 8: AWS インフラ
 
-- [ ] 8.1 `template.yaml`（SAM テンプレート）
+- [x] 8.1 `template.yaml`（SAM テンプレート）
   - Lambda: Python 3.12, 256MB, timeout 300s, 同時実行数制限 1
   - EventBridge Scheduler:
     - 毎時 0 分: `cron(0 * * * ? *)`（UTC = JST と同じ）
     - 毎日 23:59 JST: `cron(59 14 * * ? *)`（UTC）
   - IAM: `secretsmanager:GetSecretValue`、Lambda 基本実行ロール
-- [ ] 8.2 CloudWatch ロググループ（`/aws/lambda/asken-myfitnesspal-sync`、保持期間 30 日）
-- [ ] 8.3 Scheduler のリトライ無効化（`MaximumRetryAttempts: 0`）
+- [x] 8.2 CloudWatch ロググループ（`/aws/lambda/asken-myfitnesspal-sync`、保持期間 30 日）
+- [x] 8.3 Scheduler のリトライ無効化（`MaximumRetryAttempts: 0`）
 
 ## Phase 9: エラーハンドリング
 
