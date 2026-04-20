@@ -8,9 +8,15 @@ ALLOWED_PREFIXES = ("python ", "python3 ", "pytest ", "ruff ", "mypy ")
 try:
     data = json.load(sys.stdin)
     command = data.get("tool_input", {}).get("command", "")
-    first_line = command.split("\n")[0].strip()
 
-    if any(first_line.startswith(p) for p in ALLOWED_PREFIXES):
+    first_real_line = ""
+    for line in command.split("\n"):
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            first_real_line = stripped
+            break
+
+    if any(first_real_line.startswith(p) for p in ALLOWED_PREFIXES):
         print('{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}')
 except Exception:
     pass
