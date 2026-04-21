@@ -150,10 +150,10 @@
 
 ## Phase 11: デプロイ
 
-- [ ] 11.1 `scripts/create_secret_mfp.sh` - Secrets Manager シークレット作成スクリプト
-- [ ] 11.2 `scripts/deploy_mfp.sh` - SAM build + deploy スクリプト
+- [x] 11.1 `scripts/create_secret_mfp.sh` - Secrets Manager シークレット作成スクリプト
+- [x] 11.2 `scripts/deploy_mfp.sh` - SAM build + deploy スクリプト
   - 前提条件チェック・シークレット確認・SAM build/deploy・デプロイ後ガイダンス
-- [ ] 11.3 初回デプロイチェックリスト
+- [x] 11.3 初回デプロイチェックリスト
   1. `scripts/create_secret_mfp.sh` で Secrets Manager にシークレット作成
   2. `scripts/deploy_mfp.sh` で SAM スタックデプロイ
   3. Lambda 手動実行で動作確認
